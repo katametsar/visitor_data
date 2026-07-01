@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="et">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Muuseumi kaardi T-koodide paigutaja</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html, body { margin:0; width:100%; height:100%; font-family: Arial, sans-serif; }
+  #app { display:flex; width:100%; height:100%; }
+  #sidebar { width:330px; min-width:300px; max-width:430px; background:#fff; border-right:1px solid #ddd; box-sizing:border-box; padding:12px; overflow:hidden; display:flex; flex-direction:column; z-index:1000; }
+  #map { flex:1; height:100%; background:#f3f3f3; }
+  h2 { margin:0 0 8px 0; font-size:18px; }
+  .small { color:#555; font-size:12px; line-height:1.35; }
+  #currentBox { padding:10px; background:#f5f5f5; border-radius:8px; margin:10px 0; border:1px solid #e5e5e5; }
+  #currentCode { font-size:24px; font-weight:bold; margin-top:4px; }
+  .row { display:flex; gap:6px; margin:6px 0; }
+  button { cursor:pointer; border:1px solid #bbb; background:#f8f8f8; border-radius:6px; padding:7px 9px; font-size:13px; }
+  button:hover { background:#eee; }
+  button.primary { background:#e8f2ff; border-color:#7aa7d9; }
+  button.danger { background:#fff0f0; border-color:#e09a9a; }
+  button.full { width:100%; }
+  input[type="text"] { width:100%; box-sizing:border-box; padding:8px; border-radius:6px; border:1px solid #bbb; }
+  #codeList { overflow:auto; border:1px solid #ddd; border-radius:8px; margin-top:8px; flex:1; }
+  .codeItem { padding:7px 9px; border-bottom:1px solid #eee; cursor:pointer; font-size:14px; display:flex; align-items:center; justify-content:space-between; }
+  .codeItem:hover { background:#f3f8ff; }
+  .codeItem.active { background:#dceeff; font-weight:bold; }
+  .codeItem.placed .codeText { color:#166534; }
+  .codeItem.notPlaced .codeText { color:#991b1b; }
+  .badge { font-size:12px; opacity:.85; }
+  #status { font-size:13px; padding:8px 0; }
+  #message { font-size:12px; color:#444; min-height:18px; margin-top:4px; }
+  .leaflet-marker-icon { cursor:move; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <h2>T-koodide paigutaja</h2>
+    <div class="small">Vali T-kood, kliki kaardil asukohta. Kui sama koodi uuesti klikid, liigub punkt uude kohta. Punkti saab ka lohistada.</div>
+
+    <div id="currentBox">
+      <div class="small">Praegu paigutad:</div>
+      <div id="currentCode">Laen...</div>
+      <div id="message"></div>
+    </div>
+
+    <div class="row">
+      <button onclick="prevCode()">← Eelmine</button>
+      <button class="primary" onclick="nextUnplaced()">Järgmine tühi</button>
+      <button onclick="nextCode()">Järgmine →</button>
+    </div>
+
+    <div class="row">
+      <button class="danger" onclick="deleteCurrent()">Kustuta valitud punkt</button>
+      <button onclick="clearAllConfirm()">Tühjenda kõik</button>
+    </div>
+
+    <div class="row">
+      <button class="primary full" onclick="downloadCSV()">Salvesta coordinates.csv</button>
+    </div>
+
+    <div class="row">
+      <input type="file" id="importFile" accept=".csv" onchange="importCSV(event)" style="display:none">
+      <button class="full" onclick="document.getElementById('importFile').click()">Impordi olemasolev coordinates.csv</button>
+    </div>
+
+    <div id="status">Paigutatud: 0 / 0</div>
+    <input type="text" id="search" placeholder="Otsi T-koodi..." oninput="renderList()">
+    <div id="codeList"></div>
+  </div>
+  <div id="map"></div>
+</div>
+
+<script>
+const imageWidth = 11812;
+const imageHeight = 6300;
+const STORAGE_KEY = "erm_t_code_coordinates_v2";
+
+let codes = [];
+let currentIndex = 0;
+let points = {}; // code -> {x,y,marker}
+
+const map = L.map('map', {
+  crs: L.CRS.Simple,
+  minZoom: -5,
+  maxZoom: 4,
+  zoomSnap: 0.25,
+  wheelPxPerZoomLevel: 80
+});
+
+const bounds = [[0, 0], [imageHeight, imageWidth]];
+L.imageOverlay("museum_map.png", bounds).addTo(map);
+map.fitBounds(bounds);
+
+function showMessage(txt) {
+  document.getElementById("message").textContent = txt || "";
+}
+
+function parseCodesCSV(text) {
+  return text.split(/\r?\n/)
+    .map(x => x.trim())
+    .filter(x => x && x.toLowerCase() !== "code")
+    .map(x => x.split(/[;,\t]/)[0].trim())
+    .filter(x => /^T\d+/.test(x));
+}
+
+async function loadCodes() {
+  try {
+    const res = await fetch("t_codes.csv", {cache: "no-store"});
+    const text = await res.text();
+    codes = Array.from(new Set(parseCodesCSV(text))).sort();
+  } catch(e) {
+    alert("Ei saanud t_codes.csv faili lugeda. Käivita server kaustas: python3 -m http.server 8000");
+    codes = [];
+  }
+  loadFromStorage();
+  currentIndex = firstUnplacedIndex();
+  updateUI();
+}
+
+function currentCode() { return codes[currentIndex]; }
+function firstUnplacedIndex() {
+  const idx = codes.findIndex(c => !points[c]);
+  return idx >= 0 ? idx : 0;
+}
+
+function setCurrentIndex(i) {
+  if (!codes.length) return;
+  currentIndex = Math.max(0, Math.min(i, codes.length - 1));
+  updateUI();
+}
+
+function prevCode() { setCurrentIndex(currentIndex - 1); }
+function nextCode() { setCurrentIndex(currentIndex + 1); }
+function nextUnplaced() { setCurrentIndex(firstUnplacedIndex()); }
+
+function updateUI() {
+  const code = currentCode() || "Puudub";
+  document.getElementById("currentCode").textContent = code;
+  const placed = Object.keys(points).length;
+  document.getElementById("status").textContent = `Paigutatud: ${placed} / ${codes.length}`;
+  renderList();
+}
+
+function renderList() {
+  const list = document.getElementById("codeList");
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  list.innerHTML = "";
+
+  codes.forEach((code, i) => {
+    if (q && !code.toLowerCase().includes(q)) return;
+    const div = document.createElement("div");
+    div.className = "codeItem " + (points[code] ? "placed" : "notPlaced") + (i === currentIndex ? " active" : "");
+    div.onclick = () => setCurrentIndex(i);
+    div.innerHTML = `<span class="codeText">${points[code] ? "🟢" : "🔴"} ${code}</span><span class="badge">${points[code] ? "ok" : "puudu"}</span>`;
+    list.appendChild(div);
+  });
+}
+
+function saveToStorage() {
+  const simple = {};
+  Object.keys(points).forEach(code => { simple[code] = {x: points[code].x, y: points[code].y}; });
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(simple));
+}
+
+function loadFromStorage() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return;
+  try {
+    const saved = JSON.parse(raw);
+    Object.keys(saved).forEach(code => {
+      if (codes.includes(code)) addOrMovePoint(code, saved[code].x, saved[code].y, false);
+    });
+  } catch(e) {}
+}
+
+function makeMarker(code, x, y) {
+  const latlng = [y, x];
+  const marker = L.circleMarker(latlng, {
+    radius: 6,
+    weight: 2,
+    fillOpacity: 0.75
+  }).addTo(map);
+
+  marker.bindPopup(`<b>${code}</b><br>x=${x}, y=${y}<br><button onclick="deleteByCode('${code}')">Kustuta</button>`);
+
+  marker.on("mousedown", function() { map.dragging.disable(); });
+  marker.on("mouseup", function() { map.dragging.enable(); });
+
+  // Lihtne lohistamine circleMarkerile
+  marker.on("mousedown", function(e) {
+    const move = function(ev) {
+      const nx = Math.round(ev.latlng.lng);
+      const ny = Math.round(ev.latlng.lat);
+      marker.setLatLng(ev.latlng);
+      points[code].x = nx;
+      points[code].y = ny;
+      marker.setPopupContent(`<b>${code}</b><br>x=${nx}, y=${ny}<br><button onclick="deleteByCode('${code}')">Kustuta</button>`);
+    };
+    const up = function() {
+      map.off("mousemove", move);
+      map.off("mouseup", up);
+      map.dragging.enable();
+      saveToStorage();
+      updateUI();
+    };
+    map.on("mousemove", move);
+    map.on("mouseup", up);
+  });
+
+  return marker;
+}
+
+function addOrMovePoint(code, x, y, shouldSave=true) {
+  if (!code) return;
+  if (points[code]) map.removeLayer(points[code].marker);
+  const marker = makeMarker(code, x, y);
+  points[code] = {x, y, marker};
+  if (shouldSave) saveToStorage();
+}
+
+map.on("click", function(e) {
+  const code = currentCode();
+  if (!code) return;
+  const x = Math.round(e.latlng.lng);
+  const y = Math.round(e.latlng.lat);
+  addOrMovePoint(code, x, y, true);
+  showMessage(`${code} salvestatud: x=${x}, y=${y}`);
+
+  const next = codes.findIndex((c, idx) => idx > currentIndex && !points[c]);
+  if (next >= 0) setCurrentIndex(next); else updateUI();
+});
+
+function deleteByCode(code) {
+  if (points[code]) {
+    map.removeLayer(points[code].marker);
+    delete points[code];
+    saveToStorage();
+    updateUI();
+    showMessage(`${code} kustutatud`);
+  }
+}
+
+function deleteCurrent() { deleteByCode(currentCode()); }
+
+function clearAllConfirm() {
+  if (!confirm("Kas kustutan kõik paigutatud punktid sellest brauserist?")) return;
+  Object.keys(points).forEach(code => map.removeLayer(points[code].marker));
+  points = {};
+  localStorage.removeItem(STORAGE_KEY);
+  updateUI();
+  showMessage("Kõik punktid kustutatud");
+}
+
+function downloadCSV() {
+  let csv = "code,x,y\n";
+  codes.forEach(code => {
+    if (points[code]) csv += `${code},${points[code].x},${points[code].y}\n`;
+  });
+  const blob = new Blob([csv], {type: "text/csv;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "coordinates.csv";
+  a.click();
+}
+
+function importCSV(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const lines = e.target.result.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    lines.forEach((line, i) => {
+      if (i === 0 && line.toLowerCase().includes("code")) return;
+      const parts = line.split(/[;,\t]/);
+      const code = parts[0]?.trim();
+      const x = Math.round(parseFloat(parts[1]));
+      const y = Math.round(parseFloat(parts[2]));
+      if (code && codes.includes(code) && Number.isFinite(x) && Number.isFinite(y)) {
+        addOrMovePoint(code, x, y, false);
+      }
+    });
+    saveToStorage();
+    updateUI();
+    showMessage("CSV imporditud");
+  };
+  reader.readAsText(file);
+}
+
+loadCodes();
+</script>
+</body>
+</html>
