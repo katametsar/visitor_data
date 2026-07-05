@@ -45,3 +45,98 @@ usage <- dta |>
 usage |> tail()
 ```
 
+# number of visitors
+
+```{r}
+usage |> count(visitor_id) |> #93,595 
+  filter(n != 1) |>  # 86,264 
+  arrange(desc(n))
+```
+
+
+```
+visitor_id          n 
+03	                28812			
+04	                13967			
+02	                11048			
+06	                8958			
+07	                6134			
+05	                2862			
+032020203247523845	754			
+04202020333447394c	750	
+```
+This is a bit strange -> can a person realistically have this many entries? (differentiate by date?) 
+Also what does the shorter entry mean ("03" vs. "032020203247523845")? 
+
+```{r}
+usage |> count(visitor_id, date) |> #93,595 
+  filter(n != 1) |>  # 86,264 
+  arrange(desc(n))
+```
+
+
+```
+visitor_id  date        n
+04	        2019-04-20	1584		
+04	        2019-04-19	1477		
+03	        2019-04-09	1309		
+06	        2019-04-20	1261		
+04	        2019-04-11	1257		
+03	        2019-04-23	1147		
+03	        2019-04-26	1092		
+03	        2019-04-20	1069		
+06	        2019-04-19	1004		
+03	        2019-04-19	993	
+```
+That is a bit better, but still rather strange. I worry this short id could be some error? or else? 
+Are some tickets sold for more than one day? (its not important for modelling the pathways, but to at least know why are the numbers so high) 
+
+```{r}
+visitors_100 <- usage |> count(visitor_id, date) |> #93,595 
+  filter(n != 1 & n <= 100) |>  # 86,264 
+  arrange(desc(n)) |> select(visitor_id, date) 
+```
+
+
+# Convert single visitor data into network data with origin and destination  
+
+```{r}
+visitor <- usage |> filter(visitor_id == "02000000045e147957") # example visitor
+```
+
+```{r}
+networking <- function(visitor){
+  origin <- c()
+  dest <- c()
+  time_origin <- c()
+  time_dest <- c()
+
+  n <- visitor |> nrow()
+  
+  for(i in 1:(n-1)){
+    origin[i] <- visitor$point_id[i]
+    dest[i] <- visitor$point_id[i+1]
+    # visitor_id[i] <- visitor$visitor_id[i] 
+    time_origin[i] <- visitor$timestamp[i] 
+    time_dest[i] <- visitor$timestamp[i+1] 
+  }
+  
+  return(data.frame(
+    visitor_id = (rep(visitor$visitor_id |> unique(),n = n-1)),
+    origin = origin, 
+    dest = dest, 
+    time_origin = time_origin,  
+    time_dest = time_dest, 
+    duration = time_dest - time_origin, #time in second in between the two events 
+    weekday = rep(visitor$weekday |> unique(),n = n-1) 
+  ) |> mutate(time_origin = as.POSIXct(time_origin), 
+               time_dest = as.POSIXct(time_dest)))
+}
+```
+
+```{r}
+networking(visitor)
+```
+
+Now it needs to be just done for all the visitors - a long computation, so, are we doing it? 
+
