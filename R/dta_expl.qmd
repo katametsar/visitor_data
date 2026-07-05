@@ -1,0 +1,47 @@
+---
+title: "Data Exploration"
+format: html
+editor: source
+---
+
+```{r setup}
+library(dplyr)
+library(lubridate)
+
+dta <- read.csv(file = "~/ERM/data_clean/logs_with_devices.csv")
+```
+
+```{r}
+dta |> head() |> View()
+```
+
+```{r}
+usage <- dta |> 
+  filter(!is.na(point_id)) |> 
+  mutate(
+    timestamp = dmy_hms(time_raw),
+    date = as_date(timestamp),
+    hour = hour(timestamp),
+    weekday = wday(timestamp, label = TRUE, week_start = 1),
+    month = month(timestamp),
+    visitor_id = card_hex
+  )
+
+```
+
+
+# TODO: 
+
+- [] go through the research questions and plan how to answer them 
+- [] how to map the data points onto the floor plan
+    - device_id 
+    - a dynamic floorplan
+- [] connect metadata to logs 
+- [] parquet file + pipeline automation + cleanup 
+- [X] network data - model the individual 
+- [] network data - compute all paths for all visitors 
+
+```{r}
+usage |> tail()
+```
+
