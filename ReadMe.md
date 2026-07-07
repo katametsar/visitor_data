@@ -8,6 +8,32 @@ The dataset supports analysis of system interactions, exhibition point usage, te
 
 ---
 
+## RQs, tasks and progress
+
+How do different visitors walk through the exhibition? 
+
+- [] Model the paths of visitors  
+  - [x] isolate the paths
+  - [] visualise the paths 
+    - [] visualise the model of the museum exhibition 
+- [] Heatmap of the most visited parts of the exhibition 
+  - [x] counts of the devices
+  - [] visualise 
+
+How do visitors visit the exhibition? What patterns, what dates, events, weather... 
+
+- [] Visitor data 
+  - [] Model with the  ticket sales data - fixed effects/multi var regression? 
+      - [] seasonal effects 
+      - [] weather effects 
+      - [] weekday effects
+    - [] import the ticket sales 
+    - [] school vacations 
+    - [] ERM events 
+    - [] weather in Tartu 
+
+---
+
 ## Access & allowed use
 
 This dataset is provided for:
