@@ -62,6 +62,7 @@ visitor-logs/
 │   └── daily_usage_coverage_summary.csv
 │
 ├── R/
+│   ├── 00_pipeline.R
 │   ├── 01_parse_logs.R
 │   ├── 02_join_devices.R
 │   ├── 03_make_paths.R

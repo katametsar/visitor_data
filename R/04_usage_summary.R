@@ -1,7 +1,7 @@
 suppressPackageStartupMessages(library(tidyverse))
 suppressPackageStartupMessages(library(lubridate))
 
-logs <- read_csv("~/ERM/data_clean/logs_with_devices.csv", show_col_types = FALSE)
+logs <- read_csv("~/visitor_data/data_clean/logs_with_devices.csv", show_col_types = FALSE)
 
 usage <- logs %>%
   filter(!is.na(point_id)) %>%
@@ -36,11 +36,11 @@ weekday_usage <- usage %>%
 
 dir.create("outputs", showWarnings = FALSE)
 
-write_csv(point_usage, "~/ERM/outputs/point_usage.csv")
-write_csv(daily_usage, "~/ERM/outputs/daily_usage.csv")
-write_csv(daily_visitors, "~/ERM/outputs/daily_visitors.csv")
-write_csv(hourly_usage, "~/ERM/outputs/hourly_usage.csv")
-write_csv(weekday_usage, "~/ERM/outputs/weekday_usage.csv")
+write_csv(point_usage, "~/visitor_data/outputs/point_usage.csv")
+write_csv(daily_usage, "~/visitor_data/outputs/daily_usage.csv")
+write_csv(daily_visitors, "~/visitor_data/outputs/daily_visitors.csv")
+write_csv(hourly_usage, "~/visitor_data/outputs/hourly_usage.csv")
+write_csv(weekday_usage, "~/visitor_data/outputs/weekday_usage.csv")
 
 print("Valmis. Salvestatud outputs kausta:")
 print("point_usage.csv")
