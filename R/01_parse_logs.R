@@ -1,7 +1,7 @@
 library(tidyverse)
 
 log_files <- list.files(
-  "data_raw/Logide_failid",
+  "~/ERM/data_raw/Logide_failid",
   pattern = "\\.log$",
   full.names = TRUE
 )
@@ -37,7 +37,7 @@ dir.create("data_clean", showWarnings = FALSE)
 
 write_csv(
   parsed_logs,
-  "data_clean/parsed_logs.csv"
+  "~/ERM/data_clean/parsed_logs.csv"
 )
 
 print("Salvestatud: data_clean/parsed_logs.csv")

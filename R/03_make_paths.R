@@ -1,7 +1,7 @@
 suppressPackageStartupMessages(library(tidyverse))
 suppressPackageStartupMessages(library(lubridate))
 
-logs <- read_csv("data_clean/logs_with_devices.csv", show_col_types = FALSE)
+logs <- read_csv("~/ERM/data_clean/logs_with_devices.csv", show_col_types = FALSE)
 
 # 1. Jätame alles ainult punktiga logid
 # 2. Teeme aja ja külastaja ID
@@ -32,9 +32,9 @@ paths <- logs_compact %>%
   filter(!is.na(next_point)) %>%
   filter(seconds_to_next > 0, seconds_to_next < 3600)
 
-write_csv(paths, "data_clean/visitor_paths.csv")
+write_csv(paths, "~/ERM/data_clean/visitor_paths.csv")
 
-print("Salvestatud: data_clean/visitor_paths.csv")
+print("Salvestatud: ~/ERM/data_clean/visitor_paths.csv")
 print(paste("Algseid logiridu:", nrow(logs)))
 print(paste("Kompaktseid külastuspunkti ridu:", nrow(logs_compact)))
 print(paste("Teekonnalõike:", nrow(paths)))

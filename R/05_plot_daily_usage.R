@@ -2,7 +2,7 @@ suppressPackageStartupMessages(library(tidyverse))
 suppressPackageStartupMessages(library(lubridate))
 
 daily_usage <- read_csv(
-  "outputs/daily_usage.csv",
+  "~/ERM/outputs/daily_usage.csv",
   show_col_types = FALSE
 ) %>%
   mutate(date = as_date(date)) %>%
@@ -43,7 +43,7 @@ p_points <- ggplot(daily_complete, aes(x = date, y = interactions)) +
   theme_minimal()
 
 ggsave(
-  "outputs/daily_usage_points.png",
+  "~/ERM/outputs/daily_usage_points.png",
   plot = p_points,
   width = 13,
   height = 6
@@ -69,7 +69,7 @@ p_line <- ggplot(daily_segments, aes(x = date, y = interactions, group = segment
   theme_minimal()
 
 ggsave(
-  "outputs/daily_usage_discontinuous_line.png",
+  "~/ERM/outputs/daily_usage_discontinuous_line.png",
   plot = p_line,
   width = 13,
   height = 6
@@ -88,12 +88,12 @@ coverage_summary <- daily_complete %>%
 
 write_csv(
   daily_complete,
-  "outputs/daily_usage_complete_calendar.csv"
+  "~/ERM/outputs/daily_usage_complete_calendar.csv"
 )
 
 write_csv(
   coverage_summary,
-  "outputs/daily_usage_coverage_summary.csv"
+  "~/ERM/outputs/daily_usage_coverage_summary.csv"
 )
 
 print("Salvestatud:")

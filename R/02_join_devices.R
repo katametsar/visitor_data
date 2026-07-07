@@ -1,10 +1,10 @@
 suppressPackageStartupMessages(library(tidyverse))
 suppressPackageStartupMessages(library(readxl))
 
-logs <- read_csv("data_clean/parsed_logs.csv", show_col_types = FALSE)
+logs <- read_csv("~/ERM/data_clean/parsed_logs.csv", show_col_types = FALSE)
 
 devices <- read_excel(
-  "data_raw/Device_id.xlsx",
+  "~/ERM/data_raw/Device_id.xlsx",
   sheet = "kõik logid"
 )
 
@@ -37,7 +37,7 @@ print(head(logs_with_devices, 10))
 
 write_csv(
   logs_with_devices,
-  "data_clean/logs_with_devices.csv"
+  "~/ERM/data_clean/logs_with_devices.csv"
 )
 
-print("Salvestatud: data_clean/logs_with_devices.csv")
+print("Salvestatud: ~/ERM/data_clean/logs_with_devices.csv")
