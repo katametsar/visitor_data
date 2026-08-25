@@ -1,7 +1,26 @@
+# macOS
 .DS_Store
-.Rhistory
-.RData
 
-data_clean/*.csv
-outputs/*.csv
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# RStudio
 .Rproj.user
+
+# Toorlogid
+data_raw/Logide_failid/
+*.log
+
+# Analüüsi väljundid
+outputs/
+
+# Koordinaatide loomise abifailid
+visitor_map_clicker_v2/
+data_raw/coordinates.csv
+data_raw/coordinates_old_backup.csv
+
+# Suured/toorandmed, mida dashboard ei vaja
+data_clean/
