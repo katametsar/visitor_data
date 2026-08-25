@@ -261,7 +261,11 @@ for src, dst in {
     if dst not in sessions.columns and src in sessions.columns:
         sessions[dst] = sessions[src]
 
-sessions["ticket_language"] = sessions.get("ticket_language", "Teadmata").fillna("Teadmata").astype(str)
+sessions["ticket_language"] = (
+    sessions["ticket_language"]
+    .astype("string")
+    .fillna("Teadmata")
+)
 sessions["duration_minutes"] = pd.to_numeric(sessions.get("duration_minutes"), errors="coerce")
 sessions["unique_t_codes"] = pd.to_numeric(sessions.get("unique_t_codes"), errors="coerce")
 sessions["event_count"] = pd.to_numeric(sessions.get("event_count"), errors="coerce")
