@@ -23,6 +23,8 @@ TICKET_SALES_FILE = DATA_DIR / "ticket_sales_daily.parquet"
 SCHOOL_HOLIDAYS_FILE = DATA_DIR / "school_holidays_daily.parquet"
 WEATHER_FILE = DATA_DIR / "weather_daily.parquet"
 MUSEUM_EVENTS_FILE = DATA_DIR / "museum_events_daily.parquet"
+DATA_COVERAGE_DAILY_FILE = DATA_DIR / "data_coverage_daily.parquet"
+DATA_COVERAGE_MONTHLY_FILE = DATA_DIR / "data_coverage_monthly.parquet"
 COORDINATES_FILE = RAW_DIR / "coordinates_fixed.csv"
 DEVICE_FILE = RAW_DIR / "Device_id.xlsx"
 MAP_FILE = RAW_DIR / "museum_map.png"
@@ -164,6 +166,121 @@ def add_gap_breaks(df, date_col, value_cols, max_gap_days=1):
     return pd.DataFrame(rows)
 
 
+def time_grain_title(grain):
+    return {"day": "päev", "week": "nädal", "month": "kuu"}.get(grain, "päev")
+
+
+def add_period_column(df, grain, source_col="date", target_col="period_date"):
+    """Lisa päeva-, nädala- või kuupõhine perioodi alguskuupäev."""
+    out = df.copy()
+    dates = pd.to_datetime(out[source_col], errors="coerce")
+    if grain == "week":
+        out[target_col] = (dates - pd.to_timedelta(dates.dt.dayofweek, unit="D")).dt.normalize()
+    elif grain == "month":
+        out[target_col] = dates.dt.to_period("M").dt.to_timestamp()
+    else:
+        out[target_col] = dates.dt.normalize()
+    return out
+
+
+def period_label(ts, grain):
+    if pd.isna(ts):
+        return ""
+    ts = pd.Timestamp(ts)
+    if grain == "week":
+        end = ts + pd.Timedelta(days=6)
+        if ts.year == end.year:
+            return f"{ts.strftime('%d.%m')}–{end.strftime('%d.%m.%Y')}"
+        return f"{ts.strftime('%d.%m.%Y')}–{end.strftime('%d.%m.%Y')}"
+    if grain == "month":
+        months = [
+            "jaanuar", "veebruar", "märts", "aprill", "mai", "juuni",
+            "juuli", "august", "september", "oktoober", "november", "detsember"
+        ]
+        return f"{months[ts.month-1]} {ts.year}"
+    return ts.strftime("%d.%m.%Y")
+
+
+def full_period_index(start_date, end_date, grain):
+    start = pd.to_datetime(start_date, errors="coerce")
+    end = pd.to_datetime(end_date, errors="coerce")
+    if pd.isna(start) or pd.isna(end):
+        return pd.DatetimeIndex([])
+    if grain == "week":
+        start = (start - pd.Timedelta(days=start.dayofweek)).normalize()
+        end = (end - pd.Timedelta(days=end.dayofweek)).normalize()
+        return pd.date_range(start, end, freq="7D")
+    if grain == "month":
+        start = start.to_period("M").to_timestamp()
+        end = end.to_period("M").to_timestamp()
+        return pd.date_range(start, end, freq="MS")
+    return pd.date_range(start.normalize(), end.normalize(), freq="D")
+
+
+def aggregate_counts(df, grain, value_col=None, count_name="value"):
+    """Koonda päev/nädal/kuu. value_col=None korral loendab read."""
+    if df.empty:
+        return pd.DataFrame(columns=["period_date", count_name])
+    d = add_period_column(df, grain)
+    if value_col is None:
+        out = d.groupby("period_date", observed=True).size().reset_index(name=count_name)
+    else:
+        out = (
+            d.groupby("period_date", observed=True)[value_col]
+            .sum(min_count=1)
+            .reset_index(name=count_name)
+        )
+    return out.sort_values("period_date")
+
+
+def coverage_by_period(start_date, end_date, grain):
+    """Andmekatvus valitud perioodis; digilogid ja piletimüük jäävad eraldi tunnusteks."""
+    if data_coverage_daily.empty:
+        return pd.DataFrame(columns=[
+            "period_date", "calendar_days", "log_days", "ticket_days",
+            "log_coverage_pct", "ticket_coverage_pct"
+        ])
+    cov = filter_dates(data_coverage_daily, start_date, end_date)
+    if cov.empty:
+        return pd.DataFrame()
+    cov = add_period_column(cov, grain)
+    for col in ["log_data_available", "ticket_data_available"]:
+        if col not in cov.columns:
+            cov[col] = False
+    grouped = (
+        cov.groupby("period_date", observed=True)
+        .agg(
+            calendar_days=("date", "size"),
+            log_days=("log_data_available", "sum"),
+            ticket_days=("ticket_data_available", "sum"),
+        )
+        .reset_index()
+    )
+    grouped["log_coverage_pct"] = np.where(
+        grouped["calendar_days"] > 0, 100 * grouped["log_days"] / grouped["calendar_days"], np.nan
+    )
+    grouped["ticket_coverage_pct"] = np.where(
+        grouped["calendar_days"] > 0, 100 * grouped["ticket_days"] / grouped["calendar_days"], np.nan
+    )
+    return grouped
+
+
+def complete_time_series(df, start_date, end_date, grain, value_cols):
+    """Lisa puuduvad perioodid NaN-ina, et Plotly ei ühendaks andmeauke joonega."""
+    idx = full_period_index(start_date, end_date, grain)
+    if len(idx) == 0:
+        return df.copy()
+    base = pd.DataFrame({"period_date": idx})
+    if df.empty:
+        out = base
+        for col in value_cols:
+            out[col] = np.nan
+    else:
+        out = base.merge(df, on="period_date", how="left")
+    out["period_label"] = out["period_date"].apply(lambda x: period_label(x, grain))
+    return out
+
+
 def filter_sessions(start_date=None, end_date=None, langs=None):
     out = filter_dates(sessions, start_date, end_date)
     if langs:
@@ -281,6 +398,8 @@ ticket_sales = ensure_date(read_optional(TICKET_SALES_FILE))
 school_holidays = ensure_date(read_optional(SCHOOL_HOLIDAYS_FILE))
 weather_daily = ensure_date(read_optional(WEATHER_FILE))
 museum_events_daily = ensure_date(read_optional(MUSEUM_EVENTS_FILE))
+data_coverage_daily = ensure_date(read_optional(DATA_COVERAGE_DAILY_FILE))
+data_coverage_monthly = ensure_date(read_optional(DATA_COVERAGE_MONTHLY_FILE), col="month_date")
 
 # Koordinaadid
 coordinates = pd.read_csv(COORDINATES_FILE, dtype={"code":"string"}).rename(columns={"code":"t_code"})
@@ -412,6 +531,20 @@ filter_bar = html.Div([
                             start_date=min_date, end_date=max_date, display_format="DD.MM.YYYY", first_day_of_week=1),
     ]),
     html.Div([
+        html.Label("Ajajaotus", style={"fontSize":"13px","fontWeight":"600","display":"block","marginBottom":"6px"}),
+        dcc.RadioItems(
+            id="time-grain",
+            options=[
+                {"label":" Päev", "value":"day"},
+                {"label":" Nädal", "value":"week"},
+                {"label":" Kuu", "value":"month"},
+            ],
+            value="day",
+            inline=True,
+            labelStyle={"marginRight":"16px"},
+        ),
+    ], style={"minWidth":"250px"}),
+    html.Div([
         html.Label("Piletikeel", style={"fontSize":"13px","fontWeight":"600","display":"block","marginBottom":"6px"}),
         dcc.Dropdown(id="language-filter", options=lang_options, value=[], multi=True,
                      placeholder="Kõik keeled", clearable=True),
@@ -516,9 +649,9 @@ def render_tab(tab):
     Output("kpi-tickets","children"), Output("kpi-sessions","children"), Output("kpi-rate","children"),
     Output("kpi-duration","children"), Output("kpi-places","children"),
     Output("overview-sales","figure"), Output("overview-language","figure"), Output("overview-duration","figure"), Output("overview-hour","figure"),
-    Input("date-range","start_date"), Input("date-range","end_date"), Input("language-filter","value"),
+    Input("date-range","start_date"), Input("date-range","end_date"), Input("language-filter","value"), Input("time-grain","value"),
 )
-def update_overview(start_date, end_date, langs):
+def update_overview(start_date, end_date, langs, grain):
     s = filter_sessions(start_date, end_date, langs)
     sales = filter_dates(ticket_sales, start_date, end_date)
     tickets = sales["tickets_sold"].sum() if not sales.empty and "tickets_sold" in sales.columns else np.nan
@@ -526,17 +659,53 @@ def update_overview(start_date, end_date, langs):
     rate = (n_sessions / tickets * 100) if (not langs and pd.notna(tickets) and tickets > 0) else np.nan
 
     # Müük + digisessioonid ajas. Keelefilter rakendub ainult digisessioonidele.
-    d = s.groupby("date").size().reset_index(name="digital_sessions")
-    d = add_gap_breaks(d, "date", ["digital_sessions"])
+    # Puuduvad logiperioodid jäävad NaN-iks, mitte nulliks.
+    cov = coverage_by_period(start_date, end_date, grain)
+
+    d = aggregate_counts(s, grain, value_col=None, count_name="digital_sessions")
+    d = complete_time_series(d, start_date, end_date, grain, ["digital_sessions"])
+    if not cov.empty:
+        d = d.merge(cov[["period_date","calendar_days","log_days","log_coverage_pct"]], on="period_date", how="left")
+
     fig_sales = go.Figure()
     if not sales.empty and "tickets_sold" in sales.columns:
-        t = sales[["date","tickets_sold"]].sort_values("date")
-        t = add_gap_breaks(t, "date", ["tickets_sold"])
-        fig_sales.add_trace(go.Scatter(x=t["date"], y=t["tickets_sold"], mode="lines", name="Müüdud pileteid",
-                                       hovertemplate="<b>%{x|%d.%m.%Y}</b><br>Müüdud pileteid: %{y:,.0f}<extra></extra>"))
-    fig_sales.add_trace(go.Scatter(x=d["date"], y=d["digital_sessions"], mode="lines", name="Digitaalseid sessioone",
-                                   hovertemplate="<b>%{x|%d.%m.%Y}</b><br>Digitaalseid sessioone: %{y:,.0f}<extra></extra>"))
-    fig_sales = style_fig(fig_sales, "Piletimüük ja digitaalse süsteemi kasutus")
+        t = aggregate_counts(sales, grain, value_col="tickets_sold", count_name="tickets_sold")
+        t = complete_time_series(t, start_date, end_date, grain, ["tickets_sold"])
+        if not cov.empty:
+            t = t.merge(cov[["period_date","calendar_days","ticket_days","ticket_coverage_pct"]], on="period_date", how="left")
+        fig_sales.add_trace(go.Scatter(
+            x=t["period_date"], y=t["tickets_sold"], mode="lines+markers" if grain != "day" else "lines",
+            name="Müüdud pileteid", connectgaps=False,
+            customdata=np.stack([
+                t["period_label"].fillna(""),
+                t.get("ticket_days", pd.Series(np.nan, index=t.index)).fillna(0),
+                t.get("calendar_days", pd.Series(np.nan, index=t.index)).fillna(0),
+            ], axis=-1),
+            hovertemplate=(
+                "<b>%{customdata[0]}</b>"
+                "<br>Müüdud pileteid: %{y:,.0f}"
+                "<br>Piletimüügi andmepäevi: %{customdata[1]:.0f}/%{customdata[2]:.0f}"
+                "<extra></extra>"
+            ),
+        ))
+
+    fig_sales.add_trace(go.Scatter(
+        x=d["period_date"], y=d["digital_sessions"], mode="lines+markers" if grain != "day" else "lines",
+        name="Digitaalseid sessioone", connectgaps=False,
+        customdata=np.stack([
+            d["period_label"].fillna(""),
+            d.get("log_days", pd.Series(np.nan, index=d.index)).fillna(0),
+            d.get("calendar_days", pd.Series(np.nan, index=d.index)).fillna(0),
+            d.get("log_coverage_pct", pd.Series(np.nan, index=d.index)).fillna(0),
+        ], axis=-1),
+        hovertemplate=(
+            "<b>%{customdata[0]}</b>"
+            "<br>Digitaalseid sessioone: %{y:,.0f}"
+            "<br>Logiandmeid: %{customdata[1]:.0f}/%{customdata[2]:.0f} päeva (%{customdata[3]:.0f}%)"
+            "<extra></extra>"
+        ),
+    ))
+    fig_sales = style_fig(fig_sales, f"Piletimüük ja digitaalse süsteemi kasutus · {time_grain_title(grain)}")
     fig_sales.update_xaxes(title="")
     fig_sales.update_yaxes(title="Arv")
 
@@ -587,8 +756,8 @@ def update_map(start_date, end_date, langs, metric, action):
 # ============================================================
 # 8. KEELED
 # ============================================================
-@app.callback(Output("lang-summary","figure"), Output("lang-time","figure"), Input("date-range","start_date"), Input("date-range","end_date"))
-def update_languages(start_date, end_date):
+@app.callback(Output("lang-summary","figure"), Output("lang-time","figure"), Input("date-range","start_date"), Input("date-range","end_date"), Input("time-grain","value"))
+def update_languages(start_date, end_date, grain):
     s = filter_sessions(start_date, end_date, [])
     lg = s.groupby("ticket_language", as_index=False).agg(
         sessions=("session_id","size"), median_duration=("duration_minutes","median"),
@@ -600,13 +769,25 @@ def update_languages(start_date, end_date):
     fig1.update_xaxes(title="Mediaan digikasutuse kestus (min)")
     fig1.update_yaxes(title="Mediaan kasutatud eksponaate")
 
-    m = s.copy(); m["month_date"] = m["date"].dt.to_period("M").dt.to_timestamp()
-    m = m.groupby(["month_date","ticket_language"]).size().reset_index(name="sessions")
-    fig2 = px.line(m, x="month_date", y="sessions", color="ticket_language", labels=LABELS)
-    fig2 = style_fig(fig2, "Piletikeeled ajas")
+    m = add_period_column(s, grain)
+    m = m.groupby(["period_date","ticket_language"], observed=True).size().reset_index(name="sessions")
+    m["period_label"] = m["period_date"].apply(lambda x: period_label(x, grain))
+    # Iga keele seerias lisame puuduvad perioodid NaN-ina, et andmeaugud ei muutuks ühendusjooneks.
+    frames = []
+    for lang in sorted(m["ticket_language"].dropna().unique()):
+        one = m[m["ticket_language"] == lang][["period_date","sessions"]].copy()
+        one = complete_time_series(one, start_date, end_date, grain, ["sessions"])
+        one["ticket_language"] = lang
+        frames.append(one)
+    m_plot = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["period_date","sessions","period_label","ticket_language"])
+    fig2 = px.line(
+        m_plot, x="period_date", y="sessions", color="ticket_language",
+        custom_data=["period_label"], labels={**LABELS, "period_date":"Kuupäev"}
+    )
+    fig2 = style_fig(fig2, f"Piletikeeled ajas · {time_grain_title(grain)}")
     fig2.update_xaxes(title="")
     fig2.update_yaxes(title="Digitaalseid sessioone")
-    fig2.update_traces(connectgaps=False, hovertemplate="<b>%{x|%m.%Y}</b><br>Digitaalseid sessioone: %{y:,.0f}<extra></extra>")
+    fig2.update_traces(connectgaps=False, hovertemplate="<b>%{customdata[0]}</b><br>Digitaalseid sessioone: %{y:,.0f}<extra></extra>")
     return fig1, fig2
 
 # ============================================================
@@ -614,19 +795,19 @@ def update_languages(start_date, end_date):
 # ============================================================
 @app.callback(
     Output("ctx-timeline","figure"), Output("ctx-holidays","figure"), Output("ctx-events","figure"), Output("ctx-weather","figure"),
-    Input("date-range","start_date"), Input("date-range","end_date"), Input("language-filter","value"),
+    Input("date-range","start_date"), Input("date-range","end_date"), Input("language-filter","value"), Input("time-grain","value"),
 )
-def update_context(start_date, end_date, langs):
+def update_context(start_date, end_date, langs, grain):
     # Täielik kalender: piletimüük, ilm, sündmused ja koolivaheajad
     ctx = filter_dates(context_full, start_date, end_date)
 
     # Digisessioonid tulevad eraldi logidest ning keelefilter võib neid mõjutada.
     s = filter_sessions(start_date, end_date, langs)
-    digital = (
-        s.groupby("date")
-         .size()
-         .reset_index(name="digital_sessions")
-    )
+    cov = coverage_by_period(start_date, end_date, grain)
+    digital = aggregate_counts(s, grain, value_col=None, count_name="digital_sessions")
+    digital = complete_time_series(digital, start_date, end_date, grain, ["digital_sessions"])
+    if not cov.empty:
+        digital = digital.merge(cov[["period_date","calendar_days","log_days","log_coverage_pct"]], on="period_date", how="left")
 
     # --------------------------------------------------------
     # 1. AJATELG
@@ -634,30 +815,53 @@ def update_context(start_date, end_date, langs):
     fig = go.Figure()
 
     if "tickets_sold" in ctx.columns:
-        sales_plot = ctx.loc[ctx["tickets_sold"].notna(), ["date", "tickets_sold"]].copy()
-        sales_plot = add_gap_breaks(sales_plot, "date", ["tickets_sold"])
+        sales_src = ctx.loc[ctx["tickets_sold"].notna(), ["date", "tickets_sold"]].copy()
+        sales_plot = aggregate_counts(sales_src, grain, value_col="tickets_sold", count_name="tickets_sold")
+        sales_plot = complete_time_series(sales_plot, start_date, end_date, grain, ["tickets_sold"])
+        if not cov.empty:
+            sales_plot = sales_plot.merge(cov[["period_date","calendar_days","ticket_days","ticket_coverage_pct"]], on="period_date", how="left")
         if not sales_plot.empty:
             fig.add_trace(go.Scatter(
-                x=sales_plot["date"],
+                x=sales_plot["period_date"],
                 y=sales_plot["tickets_sold"],
-                mode="lines",
+                mode="lines+markers" if grain != "day" else "lines",
                 name="Müüdud pileteid",
                 connectgaps=False,
-                hovertemplate="<b>%{x|%d.%m.%Y}</b><br>Müüdud pileteid: %{y:,.0f}<extra></extra>",
+                customdata=np.stack([
+                    sales_plot["period_label"].fillna(""),
+                    sales_plot.get("ticket_days", pd.Series(np.nan, index=sales_plot.index)).fillna(0),
+                    sales_plot.get("calendar_days", pd.Series(np.nan, index=sales_plot.index)).fillna(0),
+                ], axis=-1),
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b>"
+                    "<br>Müüdud pileteid: %{y:,.0f}"
+                    "<br>Piletimüügi andmepäevi: %{customdata[1]:.0f}/%{customdata[2]:.0f}"
+                    "<extra></extra>"
+                ),
             ))
 
     if not digital.empty:
-        digital_plot = add_gap_breaks(digital, "date", ["digital_sessions"])
         fig.add_trace(go.Scatter(
-            x=digital_plot["date"],
-            y=digital_plot["digital_sessions"],
-            mode="lines",
+            x=digital["period_date"],
+            y=digital["digital_sessions"],
+            mode="lines+markers" if grain != "day" else "lines",
             name="Digitaalseid sessioone",
             connectgaps=False,
-            hovertemplate="<b>%{x|%d.%m.%Y}</b><br>Digitaalseid sessioone: %{y:,.0f}<extra></extra>",
+            customdata=np.stack([
+                digital["period_label"].fillna(""),
+                digital.get("log_days", pd.Series(np.nan, index=digital.index)).fillna(0),
+                digital.get("calendar_days", pd.Series(np.nan, index=digital.index)).fillna(0),
+                digital.get("log_coverage_pct", pd.Series(np.nan, index=digital.index)).fillna(0),
+            ], axis=-1),
+            hovertemplate=(
+                "<b>%{customdata[0]}</b>"
+                "<br>Digitaalseid sessioone: %{y:,.0f}"
+                "<br>Logiandmeid: %{customdata[1]:.0f}/%{customdata[2]:.0f} päeva (%{customdata[3]:.0f}%)"
+                "<extra></extra>"
+            ),
         ))
 
-    # Koolivaheaegade taustavööndid kasutavad nüüd täielikku kalendrit.
+    # Koolivaheaegade taustavööndid kasutavad päevatäpset kalendrit ka nädala- ja kuuvaates.
     for col, label in [
         ("school_holiday_estonia", "Eesti koolivaheaeg"),
         ("school_holiday_latvia", "Läti koolivaheaeg"),
@@ -675,7 +879,7 @@ def update_context(start_date, end_date, langs):
                         line_width=0,
                     )
 
-    fig = style_fig(fig, "Piletimüük, digikasutus ja koolivaheajad")
+    fig = style_fig(fig, f"Piletimüük, digikasutus ja koolivaheajad · {time_grain_title(grain)}")
     fig.update_xaxes(title="")
     fig.update_yaxes(title="Arv")
 
